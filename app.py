@@ -5,6 +5,7 @@ from sklearn.preprocessing import LabelEncoder
 from sklearn.ensemble import GradientBoostingRegressor
 import os
 import sys
+st.set_page_config(page_title="Health Insurance Cost Predictor", layout="centered", page_icon="🏥")
 sys.modules['sklearn.ensemble.gradient_boosting'] = sys.modules['sklearn.ensemble']
 sys.modules['sklearn.ensemble._gb'] = sys.modules['sklearn.ensemble']
 try:
@@ -19,7 +20,6 @@ try:
         model.fit(X, y)
         model_loaded = False
 except Exception as e:
-    st.error(f"⚠️ Error loading model: {e}")
     X = np.random.rand(1000, 6)
     y = 1000 + (X[:, 0] * 100) + (X[:, 2] * 200) + (X[:, 4] * 15000) + np.random.rand(1000) * 2000
     model = GradientBoostingRegressor(random_state=42, n_estimators=100, max_depth=4)
@@ -32,7 +32,6 @@ le_smoker.fit(['no', 'yes'])
 le_region = LabelEncoder()
 le_region.fit(['northeast', 'northwest', 'southeast', 'southwest'])
 USD_TO_INR = 83.5
-st.set_page_config(page_title="Health Insurance Cost Predictor", layout="centered", page_icon="🏥")
 st.title("🏥 Health Insurance Cost Predictor")
 st.markdown("Enter your details to predict your annual medical insurance costs")
 if not model_loaded:

@@ -79,8 +79,8 @@ if page == "🏠 Home - Prediction":
         prediction_inr = prediction_usd * USD_TO_INR
         st.session_state.prediction_data = {'age': age, 'sex': sex, 'bmi': bmi, 'children': children, 'smoker': smoker, 'region': region, 'prediction_usd': prediction_usd, 'prediction_inr': prediction_inr, 'timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
         st.success(f"### Estimated Annual Insurance Cost: ₹{prediction_inr:,.2f}")
-        st.info(f"**Monthly Cost:** ₹{prediction_inr/12:,.2f} per month (${prediction_usd/12:,.2f} USD)")
         st.info(f"(Approximately ${prediction_usd:,.2f} USD)")
+        st.info(f"**Monthly Cost:** ₹{prediction_inr/12:,.2f} per month (${prediction_usd/12:,.2f} USD)")
         if smoker == "Yes":
             risk_level = "High"
             color = "red"
@@ -339,3 +339,4 @@ elif page == "ℹ️ About":
     - [Health Insurance Basics](https://www.healthcare.gov)
     - [Smoking Cessation Resources](https://www.cdc.gov/tobacco/quit_smoking)
     """)
+

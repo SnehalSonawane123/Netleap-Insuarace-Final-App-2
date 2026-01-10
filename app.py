@@ -12,14 +12,13 @@ try:
     else:
         raise FileNotFoundError
 except:
-    X = np.random.rand(1000, 6)
-    y = np.random.rand(1000) * 10000
-
+    y_log = np.log1p(y)
+    
     scaler = StandardScaler()
     X_scaled = scaler.fit_transform(X)
-
+    
     model = GradientBoostingRegressor(random_state=42)
-    model.fit(X_scaled, y)
+    model.fit(X_scaled, y_log)
 
 le_sex = LabelEncoder()
 le_sex.fit(['female', 'male'])
@@ -70,4 +69,5 @@ if st.button("🔮 Predict Insurance Cost", type="primary", use_container_width=
     st.info(f"**Risk Assessment:** {risk_color} {risk_level} Risk")
     st.divider()
     st.caption("💡 This is an estimate based on statistical models. Actual insurance costs may vary. Consult with insurance professionals for accurate quotes.")
+
 

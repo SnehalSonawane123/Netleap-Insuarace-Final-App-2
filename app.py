@@ -10,6 +10,7 @@ from io import BytesIO
 from datetime import datetime
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
+import base64
 st.set_page_config(page_title="Health Insurance Cost Predictor", layout="wide", page_icon="🏥")
 sys.modules['sklearn.ensemble.gradient_boosting'] = sys.modules['sklearn.ensemble']
 sys.modules['sklearn.ensemble._gb'] = sys.modules['sklearn.ensemble']
@@ -169,13 +170,114 @@ def generate_recommendations(user_data, prediction_usd, database):
             'timeframe': 'Start within 1 month'
         })
     return recommendations
-def create_pdf_report(user_data, prediction_usd, prediction_inr, database, recommendations):
+def create_html_report(user_data, prediction_usd, prediction_inr, database, recommendations, fig):
+    avg_cost = database['predicted_cost'].mean()
+    cost_diff = prediction_usd - avg_cost
+    cost_diff_pct = (cost_diff / avg_cost) * 100
+    age_group = pd.cut([user_data['age']], bins=[0, 30, 40, 50, 100], labels=['18-30', '31-40', '41-50', '51+'])[0]
+    bmi_category = pd.cut([user_data['bmi']], bins=[0, 18.5, 25, 30, 100], labels=['Underweight', 'Normal', 'Overweight', 'Obese'])[0]
+    similar_profile = database[(database['age'].between(user_data['age']-5, user_data['age']+5)) &
+                                (database['smoker'] == user_data['smoker'].lower())]
+    percentile = (similar_profile['predicted_cost'] < prediction_usd).mean() * 100
+    chart_html = fig.to_html(include_plotlyjs='cdn', div_id='chart')
+    html_content = f"""
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Health Insurance Cost Analysis Report</title>
+    <style>
+        body {{font-family: Arial, sans-serif; margin: 40px; background-color: #f5f5f5;}}
+        .container {{max-width: 1200px; margin: 0 auto; background-color: white; padding: 40px; box-shadow: 0 0 10px rgba(0,0,0,0.1);}}
+        h1 {{color: #2c3e50; border-bottom: 3px solid #3498db; padding-bottom: 10px;}}
+        h2 {{color: #34495e; margin-top: 30px; border-left: 4px solid #3498db; padding-left: 10px;}}
+        .info-grid {{display: grid; grid-template-columns: repeat(2, 1fr); gap: 20px; margin: 20px 0;}}
+        .info-box {{background-color: #ecf0f1; padding: 15px; border-radius: 5px;}}
+        .info-label {{font-weight: bold; color: #7f8c8d;}}
+        .info-value {{font-size: 1.2em; color: #2c3e50; margin-top: 5px;}}
+        .metric-grid {{display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; margin: 20px 0;}}
+        .metric-box {{background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 20px; border-radius: 10px; text-align: center;}}
+        .metric-label {{font-size: 0.9em; opacity: 0.9;}}
+        .metric-value {{font-size: 1.8em; font-weight: bold; margin: 10px 0;}}
+        .recommendation {{background-color: #fff; border-left: 4px solid #3498db; padding: 15px; margin: 15px 0; box-shadow: 0 2px 4px rgba(0,0,0,0.1);}}
+        .priority-CRITICAL {{border-left-color: #e74c3c;}}
+        .priority-HIGH {{border-left-color: #e67e22;}}
+        .priority-MEDIUM {{border-left-color: #f39c12;}}
+        .priority-LOW {{border-left-color: #27ae60;}}
+        .rec-header {{font-size: 1.1em; font-weight: bold; margin-bottom: 10px;}}
+        .rec-detail {{margin: 5px 0; padding-left: 15px;}}
+        .chart-container {{margin: 30px 0;}}
+        .footer {{margin-top: 40px; padding-top: 20px; border-top: 2px solid #ecf0f1; color: #7f8c8d; font-size: 0.9em;}}
+        .timestamp {{text-align: right; color: #95a5a6; font-style: italic;}}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🏥 Health Insurance Cost Analysis Report</h1>
+        <div class="timestamp">Generated on: {datetime.now().strftime('%B %d, %Y at %I:%M %p')}</div>
+        <h2>Personal Information</h2>
+        <div class="info-grid">
+            <div class="info-box"><div class="info-label">Age</div><div class="info-value">{user_data['age']} years</div></div>
+            <div class="info-box"><div class="info-label">Gender</div><div class="info-value">{user_data['sex'].capitalize()}</div></div>
+            <div class="info-box"><div class="info-label">BMI</div><div class="info-value">{user_data['bmi']:.1f}</div></div>
+            <div class="info-box"><div class="info-label">Children</div><div class="info-value">{user_data['children']}</div></div>
+            <div class="info-box"><div class="info-label">Smoker</div><div class="info-value">{user_data['smoker'].capitalize()}</div></div>
+            <div class="info-box"><div class="info-label">Region</div><div class="info-value">{user_data['region'].capitalize()}</div></div>
+        </div>
+        <h2>Cost Prediction</h2>
+        <div class="metric-grid">
+            <div class="metric-box">
+                <div class="metric-label">Annual Cost (USD)</div>
+                <div class="metric-value">${prediction_usd:,.2f}</div>
+                <div class="metric-label">₹{prediction_inr:,.2f}</div>
+            </div>
+            <div class="metric-box">
+                <div class="metric-label">Monthly Cost (USD)</div>
+                <div class="metric-value">${prediction_usd/12:,.2f}</div>
+                <div class="metric-label">₹{prediction_inr/12:,.2f}</div>
+            </div>
+            <div class="metric-box">
+                <div class="metric-label">vs Average</div>
+                <div class="metric-value">{cost_diff_pct:+.1f}%</div>
+                <div class="metric-label">${cost_diff:+,.2f}</div>
+            </div>
+        </div>
+        <h2>Visual Analysis</h2>
+        <div class="chart-container">
+            {chart_html}
+        </div>
+        <h2>Personalized Recommendations</h2>
+        {''.join([f'''
+        <div class="recommendation priority-{rec['priority']}">
+            <div class="rec-header">{rec['category']} - {rec['priority']} Priority</div>
+            <div class="rec-detail"><strong>Impact:</strong> {rec['impact']}</div>
+            <div class="rec-detail"><strong>Action:</strong> {rec['action']}</div>
+            <div class="rec-detail"><strong>Timeframe:</strong> {rec['timeframe']}</div>
+        </div>
+        ''' for rec in recommendations])}
+        <h2>Statistical Comparison</h2>
+        <div class="info-grid">
+            <div class="info-box"><div class="info-label">Age Group</div><div class="info-value">{age_group}</div></div>
+            <div class="info-box"><div class="info-label">BMI Category</div><div class="info-value">{bmi_category}</div></div>
+            <div class="info-box"><div class="info-label">Cost Percentile</div><div class="info-value">{percentile:.1f}th</div></div>
+            <div class="info-box"><div class="info-label">Database Average</div><div class="info-value">${avg_cost:,.2f}</div></div>
+        </div>
+        <div class="footer">
+            <h2>Disclaimer</h2>
+            <p>This report is generated for informational purposes only and should not be considered as medical or financial advice. Actual insurance costs may vary based on provider, coverage options, and other factors. Please consult with insurance professionals and healthcare providers for personalized recommendations.</p>
+        </div>
+    </div>
+</body>
+</html>
+"""
+    return BytesIO(html_content.encode('utf-8'))
+def create_text_report(user_data, prediction_usd, prediction_inr, database, recommendations):
     report_lines = []
     report_lines.append("="*80)
     report_lines.append("HEALTH INSURANCE COST ANALYSIS REPORT")
     report_lines.append("="*80)
-    report_lines.append(f"\nGenerated on: {datetime.now().strftime('%B %d, %Y at %I:%M %p')}\n")
-    report_lines.append("\n" + "="*80)
+    report_lines.append(f"Generated on: {datetime.now().strftime('%B %d, %Y at %I:%M %p')}")
+    report_lines.append("="*80)
     report_lines.append("PERSONAL INFORMATION")
     report_lines.append("="*80)
     report_lines.append(f"Age: {user_data['age']}")
@@ -187,20 +289,20 @@ def create_pdf_report(user_data, prediction_usd, prediction_inr, database, recom
     avg_cost = database['predicted_cost'].mean()
     cost_diff = prediction_usd - avg_cost
     cost_diff_pct = (cost_diff / avg_cost) * 100
-    report_lines.append("\n" + "="*80)
+    report_lines.append("="*80)
     report_lines.append("COST PREDICTION")
     report_lines.append("="*80)
     report_lines.append(f"Annual Cost (USD): ${prediction_usd:,.2f}")
     report_lines.append(f"Annual Cost (INR): ₹{prediction_inr:,.2f}")
     report_lines.append(f"Monthly Cost (USD): ${prediction_usd/12:,.2f}")
     report_lines.append(f"Monthly Cost (INR): ₹{prediction_inr/12:,.2f}")
-    report_lines.append(f"\nDatabase Average: ${avg_cost:,.2f}")
+    report_lines.append(f"Database Average: ${avg_cost:,.2f}")
     report_lines.append(f"Difference from Average: ${cost_diff:,.2f} ({cost_diff_pct:+.1f}%)")
-    report_lines.append("\n" + "="*80)
+    report_lines.append("="*80)
     report_lines.append("PERSONALIZED RECOMMENDATIONS")
     report_lines.append("="*80)
     for i, rec in enumerate(recommendations, 1):
-        report_lines.append(f"\n{i}. {rec['category']} (Priority: {rec['priority']})")
+        report_lines.append(f"{i}. {rec['category']} (Priority: {rec['priority']})")
         report_lines.append("-" * 80)
         report_lines.append(f"Impact: {rec['impact']}")
         report_lines.append(f"Action: {rec['action']}")
@@ -210,22 +312,22 @@ def create_pdf_report(user_data, prediction_usd, prediction_inr, database, recom
     similar_profile = database[(database['age'].between(user_data['age']-5, user_data['age']+5)) &
                                 (database['smoker'] == user_data['smoker'].lower())]
     percentile = (similar_profile['predicted_cost'] < prediction_usd).mean() * 100
-    report_lines.append("\n" + "="*80)
+    report_lines.append("="*80)
     report_lines.append("STATISTICAL COMPARISON")
     report_lines.append("="*80)
     report_lines.append(f"Your Age Group: {age_group}")
     report_lines.append(f"Your BMI Category: {bmi_category}")
     report_lines.append(f"Cost Percentile: {percentile:.1f}th (among similar profiles)")
-    report_lines.append(f"\nYour annual cost of ${prediction_usd:,.0f} is {cost_diff_pct:+.1f}% compared to the")
+    report_lines.append(f"Your annual cost of ${prediction_usd:,.0f} is {cost_diff_pct:+.1f}% compared to the")
     report_lines.append(f"database average of ${avg_cost:,.0f}")
-    report_lines.append("\n" + "="*80)
+    report_lines.append("="*80)
     report_lines.append("DISCLAIMER")
     report_lines.append("="*80)
     report_lines.append("This report is generated for informational purposes only and should not be")
     report_lines.append("considered as medical or financial advice. Actual insurance costs may vary")
     report_lines.append("based on provider, coverage options, and other factors. Please consult with")
     report_lines.append("insurance professionals and healthcare providers for personalized recommendations.")
-    report_lines.append("\n" + "="*80 + "\n")
+    report_lines.append("="*80)
     report_text = "\n".join(report_lines)
     return BytesIO(report_text.encode('utf-8'))
 st.markdown("# 🏥 Health Insurance Cost Predictor")
@@ -290,14 +392,25 @@ if st.button("🔮 Predict Insurance Cost", type="primary", use_container_width=
                 st.markdown(f"**Timeframe:** {rec['timeframe']}")
         st.divider()
         st.markdown("### 📥 Download Complete Report")
-        txt_buffer = create_pdf_report(user_data, prediction_usd, prediction_inr, database, recommendations)
-        st.download_button(
-            label="📄 Download Text Report",
-            data=txt_buffer,
-            file_name=f"insurance_analysis_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt",
-            mime="text/plain",
-            use_container_width=True
-        )
+        col_dl1, col_dl2 = st.columns(2)
+        html_buffer = create_html_report(user_data, prediction_usd, prediction_inr, database, recommendations, fig)
+        txt_buffer = create_text_report(user_data, prediction_usd, prediction_inr, database, recommendations)
+        with col_dl1:
+            st.download_button(
+                label="📊 Download HTML Report (with Charts)",
+                data=html_buffer,
+                file_name=f"insurance_analysis_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html",
+                mime="text/html",
+                use_container_width=True
+            )
+        with col_dl2:
+            st.download_button(
+                label="📄 Download Text Report",
+                data=txt_buffer,
+                file_name=f"insurance_analysis_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt",
+                mime="text/plain",
+                use_container_width=True
+            )
         with st.expander("📊 Additional Cost Factors"):
             factors = []
             if smoker == "Yes":

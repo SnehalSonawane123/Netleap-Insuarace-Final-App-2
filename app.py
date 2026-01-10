@@ -3,26 +3,18 @@ import pickle
 import numpy as np
 from sklearn.preprocessing import LabelEncoder
 from sklearn.ensemble import GradientBoostingRegressor
-from sklearn.preprocessing import StandardScaler
 import os
 try:
     if os.path.exists('Insuarance(gbr).pkl'):
         with open('Insuarance(gbr).pkl', 'rb') as f:
-            model, scaler = pickle.load(f)
+            model = pickle.load(f)
     else:
         raise FileNotFoundError
 except:
     X = np.random.rand(1000, 6)
     y = np.random.rand(1000) * 10000
-
-    y_log = np.log1p(y)
-
-    scaler = StandardScaler()
-    X_scaled = scaler.fit_transform(X)
-
     model = GradientBoostingRegressor(random_state=42)
-    model.fit(X_scaled, y_log)
-
+    model.fit(X, y)
 le_sex = LabelEncoder()
 le_sex.fit(['female', 'male'])
 le_smoker = LabelEncoder()
@@ -49,8 +41,7 @@ if st.button("🔮 Predict Insurance Cost", type="primary", use_container_width=
     smoker_encoded = le_smoker.transform([smoker.lower()])[0]
     region_encoded = le_region.transform([region.lower()])[0]
     input_data = np.array([[age, sex_encoded, bmi, children, smoker_encoded, region_encoded]])
-    input_data_scaled = scaler.transform(input_data)
-    prediction_usd = model.predict(input_data_scaled)[0]
+    prediction_usd = model.predict(input_data)[0]
     prediction_inr = prediction_usd * USD_TO_INR
     st.success("### 💰 Prediction Results")
     col_result1, col_result2 = st.columns(2)
@@ -72,6 +63,3 @@ if st.button("🔮 Predict Insurance Cost", type="primary", use_container_width=
     st.info(f"**Risk Assessment:** {risk_color} {risk_level} Risk")
     st.divider()
     st.caption("💡 This is an estimate based on statistical models. Actual insurance costs may vary. Consult with insurance professionals for accurate quotes.")
-
-
-

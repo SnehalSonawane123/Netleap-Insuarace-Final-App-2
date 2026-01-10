@@ -88,7 +88,8 @@ if st.button("🔮 Predict Insurance Cost", type="primary", use_container_width=
                 for factor in factors:
                     st.write(factor)
             else:
-                st.write("• Your profile shows standard risk factors")
+                st.write("No risk factors")
     except Exception as e:
         st.error(f"❌ Prediction error: {e}")
+
 

@@ -20,16 +20,46 @@ try:
             model = pickle.load(f)
         model_loaded = True
     else:
-        X = np.random.rand(1000, 6)
-        y = 1000 + (X[:, 0] * 100) + (X[:, 2] * 200) + (X[:, 4] * 15000) + np.random.rand(1000) * 2000
-        model = GradientBoostingRegressor(random_state=42, n_estimators=100, max_depth=4)
-        model.fit(X, y)
+        np.random.seed(42)
+        n_samples = 1000
+        X_train = np.column_stack([
+            np.random.randint(18, 65, n_samples),
+            np.random.randint(0, 2, n_samples),
+            np.random.normal(28, 6, n_samples).clip(15, 50),
+            np.random.randint(0, 6, n_samples),
+            np.random.randint(0, 2, n_samples),
+            np.random.randint(0, 4, n_samples)
+        ])
+        y_train = (1000 + 
+                   X_train[:, 0] * 250 + 
+                   X_train[:, 2] * 400 + 
+                   X_train[:, 3] * 500 + 
+                   X_train[:, 4] * 20000 + 
+                   X_train[:, 5] * 300 + 
+                   np.random.randn(n_samples) * 1000)
+        model = GradientBoostingRegressor(random_state=42, n_estimators=200, max_depth=5, learning_rate=0.1)
+        model.fit(X_train, y_train)
         model_loaded = False
 except Exception as e:
-    X = np.random.rand(1000, 6)
-    y = 1000 + (X[:, 0] * 100) + (X[:, 2] * 200) + (X[:, 4] * 15000) + np.random.rand(1000) * 2000
-    model = GradientBoostingRegressor(random_state=42, n_estimators=100, max_depth=4)
-    model.fit(X, y)
+    np.random.seed(42)
+    n_samples = 1000
+    X_train = np.column_stack([
+        np.random.randint(18, 65, n_samples),
+        np.random.randint(0, 2, n_samples),
+        np.random.normal(28, 6, n_samples).clip(15, 50),
+        np.random.randint(0, 6, n_samples),
+        np.random.randint(0, 2, n_samples),
+        np.random.randint(0, 4, n_samples)
+    ])
+    y_train = (1000 + 
+               X_train[:, 0] * 250 + 
+               X_train[:, 2] * 400 + 
+               X_train[:, 3] * 500 + 
+               X_train[:, 4] * 20000 + 
+               X_train[:, 5] * 300 + 
+               np.random.randn(n_samples) * 1000)
+    model = GradientBoostingRegressor(random_state=42, n_estimators=200, max_depth=5, learning_rate=0.1)
+    model.fit(X_train, y_train)
     model_loaded = False
 np.random.seed(42)
 db_size = 5000

@@ -34,8 +34,6 @@ le_region.fit(['northeast', 'northwest', 'southeast', 'southwest'])
 USD_TO_INR = 83.5
 st.markdown("# 🏥 Health Insurance Cost Predictor")
 st.markdown("Enter your details to predict your annual medical insurance costs")
-if not model_loaded:
-    st.warning("📌 Using fallback model. Upload the trained model file for accurate predictions.")
 st.divider()
 col1, col2 = st.columns(2)
 with col1:
@@ -91,6 +89,7 @@ if st.button("🔮 Predict Insurance Cost", type="primary", use_container_width=
                 st.write("No significant risk factors identified")
     except Exception as e:
         st.error(f"❌ Prediction error: {e}")
+
 
 
 

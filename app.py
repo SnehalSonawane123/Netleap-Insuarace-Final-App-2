@@ -12,6 +12,7 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 sys.modules['sklearn.ensemble.gradient_boosting'] = sys.modules['sklearn.ensemble']
 sys.modules['sklearn.ensemble._gb'] = sys.modules['sklearn.ensemble']
+st.set_page_config(page_title="Health Insurance Cost Predictor", layout="wide", page_icon="🏥")
 try:
     if os.path.exists('Insuarance(gbr).pkl'):
         with open('Insuarance(gbr).pkl', 'rb') as f:
@@ -440,6 +441,7 @@ if st.button("🔮 Predict Insurance Cost", type="primary", use_container_width=
     except Exception as e:
         st.error(f"❌ Prediction error: {e}")
         st.exception(e)
+
 
 
 

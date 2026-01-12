@@ -13,8 +13,6 @@ from plotly.subplots import make_subplots
 sys.modules['sklearn.ensemble.gradient_boosting'] = sys.modules['sklearn.ensemble']
 sys.modules['sklearn.ensemble._gb'] = sys.modules['sklearn.ensemble']
 st.set_page_config(page_title="Health Insurance Cost Predictor", layout="wide", page_icon="🏥")
-st.markdown("""<style>.stApp{background:linear-gradient(135deg,rgba(99,179,237,0.15) 0%,rgba(155,205,250,0.15) 25%,rgba(255,255,255,0.25) 50%,rgba(200,230,255,0.15) 75%,rgba(120,190,240,0.15) 100%),linear-gradient(45deg,#f0f8ff 0%,#e6f3ff 25%,#ffffff 50%,#f0f9ff 75%,#e8f4f8 100%);background-attachment:fixed;}.stApp::before{content:"";position:fixed;top:0;left:0;width:100%;height:100%;background-image:repeating-linear-gradient(90deg,rgba(65,150,220,0.02) 0px,transparent 1px,transparent 80px,rgba(65,150,220,0.02) 81px),repeating-linear-gradient(0deg,rgba(65,150,220,0.02) 0px,transparent 1px,transparent 80px,rgba(65,150,220,0.02) 81px);pointer-events:none;z-index:0;}.stButton>button{background:linear-gradient(135deg,#4A90E2 0%,#357ABD 100%);color:white;border:none;border-radius:12px;padding:12px 24px;font-weight:600;box-shadow:0 4px 15px rgba(74,144,226,0.3);transition:all 0.3s ease;}.stButton>button:hover{transform:translateY(-2px);box-shadow:0 6px 20px rgba(74,144,226,0.4);}[data-testid="stMetricValue"]{background:linear-gradient(135deg,rgba(255,255,255,0.9),rgba(240,248,255,0.9));padding:10px;border-radius:8px;box-shadow:0 2px 10px rgba(0,0,0,0.05);}.streamlit-expanderHeader{background:linear-gradient(135deg,rgba(255,255,255,0.95),rgba(240,248,255,0.95));border-radius:10px;border-left:4px solid #4A90E2;box-shadow:0 2px 8px rgba(0,0,0,0.08);}[data-testid="stSidebar"]{background:linear-gradient(180deg,rgba(240,248,255,0.98) 0%,rgba(230,243,255,0.98) 100%);backdrop-filter:blur(10px);}.stSuccess,.stInfo{background:linear-gradient(135deg,rgba(255,255,255,0.95),rgba(240,255,244,0.95));border-radius:12px;border-left:5px solid #28a745;backdrop-filter:blur(5px);}h1{color:#2C5F8D;text-shadow:2px 2px 4px rgba(0,0,0,0.1);font-weight:700;}h2,h3{color:#357ABD;}hr{border:none;height:2px;background:linear-gradient(90deg,transparent 0%,#4A90E2 50%,transparent 100%);margin:20px 0;}</style>""",unsafe_allow_html=True)
-try:
     if os.path.exists('Insuarance(gbr).pkl'):
         with open('Insuarance(gbr).pkl', 'rb') as f:
             model = pickle.load(f)
@@ -442,6 +440,7 @@ if st.button("🔮 Predict Insurance Cost", type="primary", use_container_width=
     except Exception as e:
         st.error(f"❌ Prediction error: {e}")
         st.exception(e)
+
 
 
 

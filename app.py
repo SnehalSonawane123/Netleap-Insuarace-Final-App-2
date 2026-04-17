@@ -2,17 +2,26 @@ import streamlit as st
 import pickle
 import numpy as np
 from sklearn.preprocessing import LabelEncoder
-from sklearn.ensemble import GradientBoostingRegressor
+from sklearn.ensemble import GradientBoostingRegressor, RandomForestRegressor
+from sklearn.linear_model import LinearRegression
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 import os
 import sys
 import pandas as pd
 from io import BytesIO
 from datetime import datetime
 import plotly.graph_objects as go
+import plotly.express as px
 from plotly.subplots import make_subplots
+
+st.set_page_config(page_title="Health Insurance Cost Predictor", layout="wide", page_icon="🏥")
 sys.modules['sklearn.ensemble.gradient_boosting'] = sys.modules['sklearn.ensemble']
 sys.modules['sklearn.ensemble._gb'] = sys.modules['sklearn.ensemble']
-st.set_page_config(page_title="Health Insurance Cost Predictor", layout="wide", page_icon="🏥")
+
+# ─────────────────────────────────────────────
+# Load or fallback GBR model
+# ─────────────────────────────────────────────
 try:
     if os.path.exists('Insuarance(gbr).pkl'):
         with open('Insuarance(gbr).pkl', 'rb') as f:
@@ -21,9 +30,13 @@ try:
     else:
         model_loaded = False
         model = None
-except Exception as e:
+except Exception:
     model_loaded = False
     model = None
+
+# ─────────────────────────────────────────────
+# Synthetic database
+# ─────────────────────────────────────────────
 np.random.seed(42)
 db_size = 5000
 database = pd.DataFrame({
@@ -34,36 +47,362 @@ database = pd.DataFrame({
     'smoker': np.random.choice(['no', 'yes'], db_size, p=[0.8, 0.2]),
     'region': np.random.choice(['northeast', 'northwest', 'southeast', 'southwest'], db_size)
 })
-le_sex = LabelEncoder()
-le_sex.fit(['female', 'male'])
-le_smoker = LabelEncoder()
-le_smoker.fit(['no', 'yes'])
-le_region = LabelEncoder()
-le_region.fit(['northeast', 'northwest', 'southeast', 'southwest'])
+
+le_sex = LabelEncoder(); le_sex.fit(['female', 'male'])
+le_smoker = LabelEncoder(); le_smoker.fit(['no', 'yes'])
+le_region = LabelEncoder(); le_region.fit(['northeast', 'northwest', 'southeast', 'southwest'])
+
 database['sex_encoded'] = le_sex.transform(database['sex'])
 database['smoker_encoded'] = le_smoker.transform(database['smoker'])
 database['region_encoded'] = le_region.transform(database['region'])
+
 def calculate_cost(age, sex_enc, bmi, children, smoker_enc, region_enc):
     base_cost = 3000
     age_factor = (age - 18) * 240
     sex_factor = sex_enc * 131.3
-    bmi_factor = max(0, (bmi - 18.5))* 393
+    bmi_factor = max(0, (bmi - 18.5)) * 393
     children_factor = children * 475.5
     smoker_factor = smoker_enc * 23847.5
     region_factor = region_enc * 352.9
     total = base_cost + age_factor + sex_factor + bmi_factor + children_factor + smoker_factor + region_factor
     return max(1121.87, min(63770.43, total))
+
 X_db = database[['age', 'sex_encoded', 'bmi', 'children', 'smoker_encoded', 'region_encoded']].values
 if model is not None:
     database['predicted_cost'] = model.predict(X_db)
 else:
-    database['predicted_cost'] = [calculate_cost(row[0], row[1], row[2], row[3], row[4], row[5]) for row in X_db]
+    database['predicted_cost'] = [calculate_cost(*row) for row in X_db]
+
 USD_TO_INR = 83.5
+
+# ─────────────────────────────────────────────
+# Model Evaluation helpers
+# ─────────────────────────────────────────────
+@st.cache_data
+def train_and_evaluate_models():
+    """Train LR, RF, GBR on the synthetic DB and return metrics + predictions."""
+    X = database[['age', 'sex_encoded', 'bmi', 'children', 'smoker_encoded', 'region_encoded']].values
+    y = database['predicted_cost'].values
+
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+    models = {
+        "Linear Regression": LinearRegression(),
+        "Random Forest": RandomForestRegressor(n_estimators=100, random_state=42),
+        "Gradient Boosting": GradientBoostingRegressor(n_estimators=200, learning_rate=0.05,
+                                                        max_depth=3, random_state=42),
+    }
+
+    results = {}
+    for name, m in models.items():
+        m.fit(X_train, y_train)
+        y_pred = m.predict(X_test)
+        mse  = mean_squared_error(y_test, y_pred)
+        rmse = np.sqrt(mse)
+        mae  = mean_absolute_error(y_test, y_pred)
+        r2   = r2_score(y_test, y_pred)
+        mape = np.mean(np.abs((y_test - y_pred) / np.maximum(np.abs(y_test), 1e-8))) * 100
+        results[name] = {
+            "model":   m,
+            "y_test":  y_test,
+            "y_pred":  y_pred,
+            "R² Score": round(r2,   4),
+            "MAE ($)":  round(mae,  2),
+            "RMSE ($)": round(rmse, 2),
+            "MSE ($²)": round(mse,  2),
+            "MAPE (%)": round(mape, 2),
+        }
+    return results
+
+def render_evaluation_tab():
+    st.markdown("## 🔬 Model Evaluation & Comparison")
+    st.markdown(
+        "All three regression algorithms are trained on the same 80/20 split of the "
+        "synthetic insurance database (5 000 records). Metrics and charts are shown side-by-side."
+    )
+
+    with st.spinner("Training models… this may take a few seconds on first load."):
+        results = train_and_evaluate_models()
+
+    model_names  = list(results.keys())
+    metric_keys  = ["R² Score", "MAE ($)", "RMSE ($)", "MSE ($²)", "MAPE (%)"]
+    palette      = {"Linear Regression": "#636EFA",
+                    "Random Forest":     "#00CC96",
+                    "Gradient Boosting": "#EF553B"}
+
+    # ── Metric cards ──────────────────────────────────────────────────────────
+    st.markdown("### 📋 Performance Metrics")
+    cols = st.columns(len(model_names))
+    for col, name in zip(cols, model_names):
+        r = results[name]
+        color = palette[name]
+        col.markdown(
+            f"""
+            <div style="background:linear-gradient(135deg,{color}22,{color}11);
+                        border-left:5px solid {color};border-radius:10px;
+                        padding:18px 14px;margin-bottom:6px;">
+              <h4 style="margin:0 0 12px 0;color:{color};">{name}</h4>
+              <table style="width:100%;font-size:0.92em;">
+                <tr><td>R² Score</td><td align="right"><b>{r['R² Score']}</b></td></tr>
+                <tr><td>MAE</td>     <td align="right"><b>${r['MAE ($)']:,.2f}</b></td></tr>
+                <tr><td>RMSE</td>    <td align="right"><b>${r['RMSE ($)']:,.2f}</b></td></tr>
+                <tr><td>MSE</td>     <td align="right"><b>${r['MSE ($²)']:,.2f}</b></td></tr>
+                <tr><td>MAPE</td>    <td align="right"><b>{r['MAPE (%)']:.2f}%</b></td></tr>
+              </table>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+    st.divider()
+
+    # ── Tabular comparison ────────────────────────────────────────────────────
+    with st.expander("📊 Full Metrics Table", expanded=False):
+        rows = []
+        for name in model_names:
+            row = {"Model": name}
+            row.update({k: results[name][k] for k in metric_keys})
+            rows.append(row)
+        df_metrics = pd.DataFrame(rows).set_index("Model")
+        st.dataframe(
+            df_metrics.style
+              .highlight_max(subset=["R² Score"], color="#d4edda")
+              .highlight_min(subset=["MAE ($)", "RMSE ($)", "MSE ($²)", "MAPE (%)"], color="#d4edda"),
+            use_container_width=True
+        )
+
+    st.divider()
+    st.markdown("### 📈 Visualizations")
+
+    # ── Tabs for each chart ───────────────────────────────────────────────────
+    tab1, tab2, tab3, tab4, tab5 = st.tabs([
+        "📊 Metric Comparison",
+        "🎯 Actual vs Predicted",
+        "📉 Residuals",
+        "🔢 Error Distribution",
+        "🏆 Best Model Insights",
+    ])
+
+    # ── Tab 1 : grouped bar – all metrics ─────────────────────────────────────
+    with tab1:
+        st.markdown("#### Side-by-side metric comparison across all algorithms")
+
+        for metric in ["R² Score", "MAE ($)", "RMSE ($)", "MAPE (%)"]:
+            fig = go.Figure()
+            for name in model_names:
+                fig.add_trace(go.Bar(
+                    x=[name],
+                    y=[results[name][metric]],
+                    name=name,
+                    marker_color=palette[name],
+                    text=[f"{results[name][metric]:,.4g}"],
+                    textposition="outside",
+                    width=0.35,
+                ))
+            fig.update_layout(
+                title=metric,
+                height=320,
+                showlegend=False,
+                yaxis_title=metric,
+                plot_bgcolor="rgba(0,0,0,0)",
+                paper_bgcolor="rgba(0,0,0,0)",
+                margin=dict(t=40, b=20),
+            )
+            st.plotly_chart(fig, use_container_width=True)
+
+    # ── Tab 2 : Actual vs Predicted scatter ───────────────────────────────────
+    with tab2:
+        st.markdown("#### How closely does each model track actual values?")
+        fig = make_subplots(rows=1, cols=3,
+                            subplot_titles=model_names,
+                            shared_yaxes=True)
+        for i, name in enumerate(model_names, 1):
+            y_test = results[name]["y_test"]
+            y_pred = results[name]["y_pred"]
+            sample  = np.random.choice(len(y_test), min(500, len(y_test)), replace=False)
+            fig.add_trace(
+                go.Scatter(
+                    x=y_test[sample], y=y_pred[sample],
+                    mode="markers",
+                    marker=dict(color=palette[name], size=5, opacity=0.55),
+                    name=name,
+                    showlegend=False,
+                ),
+                row=1, col=i,
+            )
+            # perfect-fit line
+            lo, hi = y_test.min(), y_test.max()
+            fig.add_trace(
+                go.Scatter(x=[lo, hi], y=[lo, hi],
+                           mode="lines",
+                           line=dict(color="black", dash="dash", width=1.5),
+                           showlegend=(i == 1),
+                           name="Perfect fit"),
+                row=1, col=i,
+            )
+        fig.update_layout(height=420, title="Actual vs Predicted (sample of 500)",
+                          plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)")
+        fig.update_xaxes(title_text="Actual ($)")
+        fig.update_yaxes(title_text="Predicted ($)", col=1)
+        st.plotly_chart(fig, use_container_width=True)
+
+    # ── Tab 3 : Residuals plot ─────────────────────────────────────────────────
+    with tab3:
+        st.markdown("#### Residuals (Actual − Predicted) vs Predicted values")
+        fig = make_subplots(rows=1, cols=3, subplot_titles=model_names, shared_yaxes=True)
+        for i, name in enumerate(model_names, 1):
+            y_test  = results[name]["y_test"]
+            y_pred  = results[name]["y_pred"]
+            resids  = y_test - y_pred
+            sample  = np.random.choice(len(resids), min(500, len(resids)), replace=False)
+            fig.add_trace(
+                go.Scatter(
+                    x=y_pred[sample], y=resids[sample],
+                    mode="markers",
+                    marker=dict(color=palette[name], size=4, opacity=0.5),
+                    name=name, showlegend=False,
+                ),
+                row=1, col=i,
+            )
+            fig.add_hline(y=0, line_dash="dash", line_color="black", line_width=1.5,
+                          row=1, col=i)
+        fig.update_layout(height=400, title="Residual Plot",
+                          plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)")
+        fig.update_xaxes(title_text="Predicted ($)")
+        fig.update_yaxes(title_text="Residual ($)", col=1)
+        st.plotly_chart(fig, use_container_width=True)
+
+    # ── Tab 4 : Error distribution histogram ──────────────────────────────────
+    with tab4:
+        st.markdown("#### Distribution of absolute prediction errors")
+        fig = go.Figure()
+        for name in model_names:
+            y_test = results[name]["y_test"]
+            y_pred = results[name]["y_pred"]
+            abs_err = np.abs(y_test - y_pred)
+            fig.add_trace(go.Histogram(
+                x=abs_err, name=name,
+                marker_color=palette[name],
+                opacity=0.65,
+                nbinsx=50,
+            ))
+        fig.update_layout(
+            barmode="overlay",
+            title="Absolute Error Distribution",
+            xaxis_title="Absolute Error ($)",
+            yaxis_title="Count",
+            height=420,
+            plot_bgcolor="rgba(0,0,0,0)",
+            paper_bgcolor="rgba(0,0,0,0)",
+            legend=dict(x=0.75, y=0.95),
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+        # Cumulative error (% predictions within $X error)
+        st.markdown("#### Cumulative accuracy — % of predictions within error threshold")
+        thresholds = np.linspace(0, 5000, 200)
+        fig2 = go.Figure()
+        for name in model_names:
+            y_test  = results[name]["y_test"]
+            y_pred  = results[name]["y_pred"]
+            abs_err = np.abs(y_test - y_pred)
+            pct_within = [(abs_err <= t).mean() * 100 for t in thresholds]
+            fig2.add_trace(go.Scatter(
+                x=thresholds, y=pct_within,
+                mode="lines", name=name,
+                line=dict(color=palette[name], width=2.5),
+            ))
+        fig2.update_layout(
+            title="Cumulative Error Curve",
+            xaxis_title="Error Threshold ($)",
+            yaxis_title="% Predictions within threshold",
+            height=380,
+            plot_bgcolor="rgba(0,0,0,0)",
+            paper_bgcolor="rgba(0,0,0,0)",
+        )
+        st.plotly_chart(fig2, use_container_width=True)
+
+    # ── Tab 5 : Best model feature importance ─────────────────────────────────
+    with tab5:
+        best_name = max(model_names, key=lambda n: results[n]["R² Score"])
+        st.markdown(f"#### 🏆 Best model by R²: **{best_name}** (R² = {results[best_name]['R² Score']})")
+
+        # Radar chart of normalised metrics
+        metrics_for_radar = ["R² Score", "MAE ($)", "RMSE ($)", "MAPE (%)"]
+        raw = {m: [results[n][m] for n in model_names] for m in metrics_for_radar}
+        # normalise: R² higher=better → keep; errors lower=better → invert
+        norm = {}
+        for m in metrics_for_radar:
+            vals = np.array(raw[m], dtype=float)
+            mn, mx = vals.min(), vals.max()
+            if m == "R² Score":
+                norm[m] = (vals - mn) / (mx - mn + 1e-9)
+            else:
+                norm[m] = 1 - (vals - mn) / (mx - mn + 1e-9)
+
+        fig_r = go.Figure()
+        categories = metrics_for_radar + [metrics_for_radar[0]]
+        for i, name in enumerate(model_names):
+            vals = [norm[m][i] for m in metrics_for_radar]
+            vals += [vals[0]]
+            fig_r.add_trace(go.Scatterpolar(
+                r=vals, theta=categories,
+                fill="toself", name=name,
+                line_color=palette[name],
+                fillcolor=palette[name],
+                opacity=0.35,
+            ))
+        fig_r.update_layout(
+            polar=dict(radialaxis=dict(visible=True, range=[0, 1])),
+            title="Normalised Performance Radar (higher = better)",
+            height=420,
+            paper_bgcolor="rgba(0,0,0,0)",
+        )
+        st.plotly_chart(fig_r, use_container_width=True)
+
+        # Feature importance (for tree models) or coefficients (LR)
+        best_model = results[best_name]["model"]
+        feature_names = ['Age', 'Sex', 'BMI', 'Children', 'Smoker', 'Region']
+
+        if hasattr(best_model, "feature_importances_"):
+            importance = best_model.feature_importances_
+            label = "Feature Importance"
+        elif hasattr(best_model, "coef_"):
+            importance = np.abs(best_model.coef_)
+            label = "Absolute Coefficient"
+        else:
+            importance = None
+
+        if importance is not None:
+            df_imp = pd.DataFrame({"Feature": feature_names, label: importance})
+            df_imp = df_imp.sort_values(label, ascending=True)
+            fig_imp = px.bar(df_imp, x=label, y="Feature", orientation="h",
+                             title=f"{label} — {best_name}",
+                             color=label,
+                             color_continuous_scale="Blues")
+            fig_imp.update_layout(height=350,
+                                  paper_bgcolor="rgba(0,0,0,0)",
+                                  plot_bgcolor="rgba(0,0,0,0)")
+            st.plotly_chart(fig_imp, use_container_width=True)
+
+        # Summary verdict
+        st.info(
+            f"**Summary:** {best_name} achieves the highest R² of "
+            f"**{results[best_name]['R² Score']}** with an MAE of "
+            f"**${results[best_name]['MAE ($)']:,.2f}** and RMSE of "
+            f"**${results[best_name]['RMSE ($)']:,.2f}** — making it the most "
+            f"accurate model on this dataset."
+        )
+
+
+# ─────────────────────────────────────────────
+# Prediction helpers (unchanged from original)
+# ─────────────────────────────────────────────
 def create_comparison_charts(user_data, prediction_usd, database):
     fig = make_subplots(
         rows=2, cols=3,
         subplot_titles=('Your Cost vs Database Average', 'Cost by Age Group', 'Cost by BMI Category',
-                       'Cost by Smoking Status', 'Cost by Number of Children', 'Cost by Region'),
+                        'Cost by Smoking Status', 'Cost by Number of Children', 'Cost by Region'),
         specs=[[{'type': 'bar'}, {'type': 'bar'}, {'type': 'bar'}],
                [{'type': 'bar'}, {'type': 'bar'}, {'type': 'bar'}]]
     )
@@ -99,83 +438,86 @@ def create_comparison_charts(user_data, prediction_usd, database):
     fig.update_layout(height=800, showlegend=False, title_text="Comprehensive Cost Analysis")
     fig.update_yaxes(title_text="Cost (USD)")
     return fig
+
+
 def generate_recommendations(user_data, prediction_usd, database):
     recommendations = []
     avg_cost = database['predicted_cost'].mean()
     cost_diff_pct = ((prediction_usd - avg_cost) / avg_cost) * 100
     if user_data['smoker'].lower() == 'yes':
-        non_smoker_similar = database[(database['smoker'] == 'no') & 
-                                       (database['age'].between(user_data['age']-5, user_data['age']+5)) &
-                                       (database['bmi'].between(user_data['bmi']-2, user_data['bmi']+2))]['predicted_cost'].mean()
+        non_smoker_similar = database[
+            (database['smoker'] == 'no') &
+            (database['age'].between(user_data['age']-5, user_data['age']+5)) &
+            (database['bmi'].between(user_data['bmi']-2, user_data['bmi']+2))
+        ]['predicted_cost'].mean()
         potential_savings = prediction_usd - non_smoker_similar
         recommendations.append({
-            'category': 'Smoking Cessation',
-            'priority': 'HIGH',
+            'category': 'Smoking Cessation', 'priority': 'HIGH',
             'impact': f'Potential savings: ${potential_savings:,.0f}/year (₹{potential_savings*USD_TO_INR:,.0f})',
             'action': 'Quit smoking to reduce insurance costs by 50-70%. Join smoking cessation programs, use nicotine replacement therapy, or consult a healthcare provider.',
             'timeframe': '6-12 months to see premium reductions'
         })
     if user_data['bmi'] > 30:
-        normal_bmi_similar = database[(database['bmi'].between(18.5, 25)) & 
-                                       (database['age'].between(user_data['age']-5, user_data['age']+5)) &
-                                       (database['smoker'] == user_data['smoker'].lower())]['predicted_cost'].mean()
+        normal_bmi_similar = database[
+            (database['bmi'].between(18.5, 25)) &
+            (database['age'].between(user_data['age']-5, user_data['age']+5)) &
+            (database['smoker'] == user_data['smoker'].lower())
+        ]['predicted_cost'].mean()
         potential_savings = prediction_usd - normal_bmi_similar
         target_bmi = 24.9
         current_weight_kg = user_data['bmi'] * (1.7 ** 2)
         target_weight_kg = target_bmi * (1.7 ** 2)
         weight_loss_needed = current_weight_kg - target_weight_kg
         recommendations.append({
-            'category': 'Weight Management',
-            'priority': 'HIGH',
+            'category': 'Weight Management', 'priority': 'HIGH',
             'impact': f'Potential savings: ${potential_savings:,.0f}/year (₹{potential_savings*USD_TO_INR:,.0f})',
-            'action': f'Reduce BMI to normal range (18.5-24.9) by losing approximately {weight_loss_needed:.1f} kg. Consult a nutritionist, exercise 150 minutes/week, and maintain a balanced diet.',
+            'action': f'Reduce BMI to normal range (18.5-24.9) by losing approximately {weight_loss_needed:.1f} kg.',
             'timeframe': '12-18 months for sustainable weight loss'
         })
     elif user_data['bmi'] > 25:
         recommendations.append({
-            'category': 'Weight Optimization',
-            'priority': 'MEDIUM',
+            'category': 'Weight Optimization', 'priority': 'MEDIUM',
             'impact': 'Prevent future cost increases',
-            'action': 'Maintain healthy weight through regular exercise (30 min daily) and balanced nutrition to prevent moving into obese category.',
+            'action': 'Maintain healthy weight through regular exercise (30 min daily) and balanced nutrition.',
             'timeframe': 'Ongoing maintenance'
         })
     if user_data['age'] < 40 and user_data['smoker'].lower() == 'no' and user_data['bmi'] < 25:
         recommendations.append({
-            'category': 'Preventive Health',
-            'priority': 'MEDIUM',
+            'category': 'Preventive Health', 'priority': 'MEDIUM',
             'impact': 'Long-term cost stability',
-            'action': 'Maintain current healthy lifestyle: annual checkups, healthy diet, regular exercise, stress management, and adequate sleep.',
+            'action': 'Maintain current healthy lifestyle: annual checkups, healthy diet, regular exercise.',
             'timeframe': 'Ongoing'
         })
-    similar_profile = database[(database['age'].between(user_data['age']-5, user_data['age']+5)) &
-                                (database['bmi'].between(user_data['bmi']-3, user_data['bmi']+3)) &
-                                (database['smoker'] == user_data['smoker'].lower())]
+    similar_profile = database[
+        (database['age'].between(user_data['age']-5, user_data['age']+5)) &
+        (database['bmi'].between(user_data['bmi']-3, user_data['bmi']+3)) &
+        (database['smoker'] == user_data['smoker'].lower())
+    ]
     if len(similar_profile) > 0:
         percentile = (similar_profile['predicted_cost'] < prediction_usd).mean() * 100
         if percentile > 75:
             recommendations.append({
-                'category': 'Cost Optimization',
-                'priority': 'MEDIUM',
+                'category': 'Cost Optimization', 'priority': 'MEDIUM',
                 'impact': f'You are in the top 25% cost bracket for similar profiles',
-                'action': 'Compare insurance providers, consider high-deductible health plans with HSA, review coverage needs, and look for employer wellness program discounts.',
+                'action': 'Compare insurance providers, consider high-deductible health plans with HSA.',
                 'timeframe': 'Next policy renewal'
             })
     recommendations.append({
-        'category': 'General Wellness',
-        'priority': 'LOW',
+        'category': 'General Wellness', 'priority': 'LOW',
         'impact': 'Overall health improvement',
-        'action': 'Regular health screenings, maintain healthy habits, manage stress, get 7-8 hours sleep, stay hydrated, and build strong social connections.',
+        'action': 'Regular health screenings, manage stress, get 7-8 hours sleep, stay hydrated.',
         'timeframe': 'Ongoing lifestyle'
     })
     if cost_diff_pct > 50:
         recommendations.append({
-            'category': 'Immediate Action Required',
-            'priority': 'CRITICAL',
+            'category': 'Immediate Action Required', 'priority': 'CRITICAL',
             'impact': f'Your cost is {cost_diff_pct:.1f}% higher than average',
-            'action': 'Focus on high-priority recommendations immediately. Consider consulting with a health coach or financial advisor specialized in healthcare costs.',
+            'action': 'Focus on high-priority recommendations immediately. Consult a health coach or financial advisor.',
             'timeframe': 'Start within 1 month'
         })
     return recommendations
+
+
 def create_html_report(user_data, prediction_usd, prediction_inr, database, recommendations, fig):
     avg_cost = database['predicted_cost'].mean()
     cost_diff = prediction_usd - avg_cost
@@ -186,259 +528,189 @@ def create_html_report(user_data, prediction_usd, prediction_inr, database, reco
                                 (database['smoker'] == user_data['smoker'].lower())]
     percentile = (similar_profile['predicted_cost'] < prediction_usd).mean() * 100
     chart_html = fig.to_html(include_plotlyjs='cdn', div_id='chart')
-    html_content = f"""
-<!DOCTYPE html>
-<html>
-<head>
-    <meta charset="UTF-8">
-    <title>Health Insurance Cost Analysis Report</title>
-    <style>
-        body {{font-family: Arial, sans-serif; margin: 40px; background-color: #f5f5f5;}}
-        .container {{max-width: 1200px; margin: 0 auto; background-color: white; padding: 40px; box-shadow: 0 0 10px rgba(0,0,0,0.1);}}
-        h1 {{color: #2c3e50; border-bottom: 3px solid #3498db; padding-bottom: 10px;}}
-        h2 {{color: #34495e; margin-top: 30px; border-left: 4px solid #3498db; padding-left: 10px;}}
-        .info-grid {{display: grid; grid-template-columns: repeat(2, 1fr); gap: 20px; margin: 20px 0;}}
-        .info-box {{background-color: #ecf0f1; padding: 15px; border-radius: 5px;}}
-        .info-label {{font-weight: bold; color: #7f8c8d;}}
-        .info-value {{font-size: 1.2em; color: #2c3e50; margin-top: 5px;}}
-        .metric-grid {{display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; margin: 20px 0;}}
-        .metric-box {{background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 20px; border-radius: 10px; text-align: center;}}
-        .metric-label {{font-size: 0.9em; opacity: 0.9;}}
-        .metric-value {{font-size: 1.8em; font-weight: bold; margin: 10px 0;}}
-        .metric-sub {{font-size: 0.85em; opacity: 0.85;}}
-        .recommendation {{background-color: #fff; border-left: 4px solid #3498db; padding: 15px; margin: 15px 0; box-shadow: 0 2px 4px rgba(0,0,0,0.1);}}
-        .priority-CRITICAL {{border-left-color: #e74c3c;}}
-        .priority-HIGH {{border-left-color: #e67e22;}}
-        .priority-MEDIUM {{border-left-color: #f39c12;}}
-        .priority-LOW {{border-left-color: #27ae60;}}
-        .rec-header {{font-size: 1.1em; font-weight: bold; margin-bottom: 10px;}}
-        .rec-detail {{margin: 5px 0; padding-left: 15px;}}
-        .chart-container {{margin: 30px 0;}}
-        .footer {{margin-top: 40px; padding-top: 20px; border-top: 2px solid #ecf0f1; color: #7f8c8d; font-size: 0.9em;}}
-        .timestamp {{text-align: right; color: #95a5a6; font-style: italic;}}
-    </style>
-</head>
-<body>
-    <div class="container">
-        <h1>🏥 Health Insurance Cost Analysis Report</h1>
-        <div class="timestamp">Generated on: {datetime.now().strftime('%B %d, %Y at %I:%M %p')}</div>
-        <h2>Personal Information</h2>
-        <div class="info-grid">
-            <div class="info-box"><div class="info-label">Age</div><div class="info-value">{user_data['age']} years</div></div>
-            <div class="info-box"><div class="info-label">Gender</div><div class="info-value">{user_data['sex'].capitalize()}</div></div>
-            <div class="info-box"><div class="info-label">BMI</div><div class="info-value">{user_data['bmi']:.1f}</div></div>
-            <div class="info-box"><div class="info-label">Children</div><div class="info-value">{user_data['children']}</div></div>
-            <div class="info-box"><div class="info-label">Smoker</div><div class="info-value">{user_data['smoker'].capitalize()}</div></div>
-            <div class="info-box"><div class="info-label">Region</div><div class="info-value">{user_data['region'].capitalize()}</div></div>
-        </div>
-        <h2>Cost Prediction</h2>
-        <div class="metric-grid">
-            <div class="metric-box">
-                <div class="metric-label">Annual Cost</div>
-                <div class="metric-value">${prediction_usd:,.2f}</div>
-                <div class="metric-sub">₹{prediction_inr:,.2f}</div>
-            </div>
-            <div class="metric-box">
-                <div class="metric-label">Monthly Cost</div>
-                <div class="metric-value">${prediction_usd/12:,.2f}</div>
-                <div class="metric-sub">₹{prediction_inr/12:,.2f}</div>
-            </div>
-            <div class="metric-box">
-                <div class="metric-label">vs Average</div>
-                <div class="metric-value">{cost_diff_pct:+.1f}%</div>
-                <div class="metric-sub">${cost_diff:+,.2f}</div>
-            </div>
-        </div>
-        <h2>Visual Analysis</h2>
-        <div class="chart-container">
-            {chart_html}
-        </div>
-        <h2>Personalized Recommendations</h2>
-        {''.join([f'''
-        <div class="recommendation priority-{rec['priority']}">
-            <div class="rec-header">{rec['category']} - {rec['priority']} Priority</div>
-            <div class="rec-detail"><strong>Impact:</strong> {rec['impact']}</div>
-            <div class="rec-detail"><strong>Action:</strong> {rec['action']}</div>
-            <div class="rec-detail"><strong>Timeframe:</strong> {rec['timeframe']}</div>
-        </div>
-        ''' for rec in recommendations])}
-        <h2>Statistical Comparison</h2>
-        <div class="info-grid">
-            <div class="info-box"><div class="info-label">Age Group</div><div class="info-value">{age_group}</div></div>
-            <div class="info-box"><div class="info-label">BMI Category</div><div class="info-value">{bmi_category}</div></div>
-            <div class="info-box"><div class="info-label">Cost Percentile</div><div class="info-value">{percentile:.1f}th</div></div>
-            <div class="info-box"><div class="info-label">Database Average</div><div class="info-value">${avg_cost:,.2f}</div></div>
-        </div>
-        <div class="footer">
-            <h2>Disclaimer</h2>
-            <p>This report is generated for informational purposes only and should not be considered as medical or financial advice. Actual insurance costs may vary based on provider, coverage options, and other factors. Please consult with insurance professionals and healthcare providers for personalized recommendations.</p>
-        </div>
-    </div>
-</body>
-</html>
-"""
+    html_content = f"""<!DOCTYPE html>
+<html><head>
+<meta charset="UTF-8"><title>Health Insurance Cost Analysis Report</title>
+<style>
+body {{font-family:Arial,sans-serif;margin:40px;background:#f5f5f5;}}
+.container {{max-width:1200px;margin:0 auto;background:#fff;padding:40px;box-shadow:0 0 10px rgba(0,0,0,.1);}}
+h1 {{color:#2c3e50;border-bottom:3px solid #3498db;padding-bottom:10px;}}
+h2 {{color:#34495e;margin-top:30px;border-left:4px solid #3498db;padding-left:10px;}}
+.info-grid {{display:grid;grid-template-columns:repeat(2,1fr);gap:20px;margin:20px 0;}}
+.info-box {{background:#ecf0f1;padding:15px;border-radius:5px;}}
+.info-label {{font-weight:bold;color:#7f8c8d;}}
+.info-value {{font-size:1.2em;color:#2c3e50;margin-top:5px;}}
+.metric-grid {{display:grid;grid-template-columns:repeat(3,1fr);gap:20px;margin:20px 0;}}
+.metric-box {{background:linear-gradient(135deg,#667eea,#764ba2);color:#fff;padding:20px;border-radius:10px;text-align:center;}}
+.metric-label {{font-size:.9em;opacity:.9;}}
+.metric-value {{font-size:1.8em;font-weight:bold;margin:10px 0;}}
+.recommendation {{background:#fff;border-left:4px solid #3498db;padding:15px;margin:15px 0;box-shadow:0 2px 4px rgba(0,0,0,.1);}}
+.priority-CRITICAL {{border-left-color:#e74c3c;}}
+.priority-HIGH {{border-left-color:#e67e22;}}
+.priority-MEDIUM {{border-left-color:#f39c12;}}
+.priority-LOW {{border-left-color:#27ae60;}}
+</style></head><body>
+<div class="container">
+<h1>🏥 Health Insurance Cost Analysis Report</h1>
+<p style="text-align:right;color:#95a5a6;font-style:italic;">Generated on: {datetime.now().strftime('%B %d, %Y at %I:%M %p')}</p>
+<h2>Personal Information</h2>
+<div class="info-grid">
+<div class="info-box"><div class="info-label">Age</div><div class="info-value">{user_data['age']} years</div></div>
+<div class="info-box"><div class="info-label">Gender</div><div class="info-value">{user_data['sex'].capitalize()}</div></div>
+<div class="info-box"><div class="info-label">BMI</div><div class="info-value">{user_data['bmi']:.1f}</div></div>
+<div class="info-box"><div class="info-label">Children</div><div class="info-value">{user_data['children']}</div></div>
+<div class="info-box"><div class="info-label">Smoker</div><div class="info-value">{user_data['smoker'].capitalize()}</div></div>
+<div class="info-box"><div class="info-label">Region</div><div class="info-value">{user_data['region'].capitalize()}</div></div>
+</div>
+<h2>Cost Prediction</h2>
+<div class="metric-grid">
+<div class="metric-box"><div class="metric-label">Annual Cost</div><div class="metric-value">${prediction_usd:,.2f}</div><div>₹{prediction_inr:,.2f}</div></div>
+<div class="metric-box"><div class="metric-label">Monthly Cost</div><div class="metric-value">${prediction_usd/12:,.2f}</div><div>₹{prediction_inr/12:,.2f}</div></div>
+<div class="metric-box"><div class="metric-label">vs Average</div><div class="metric-value">{cost_diff_pct:+.1f}%</div><div>${cost_diff:+,.2f}</div></div>
+</div>
+<h2>Visual Analysis</h2>{chart_html}
+<h2>Personalized Recommendations</h2>
+{''.join([f'<div class="recommendation priority-{r["priority"]}"><b>{r["category"]} — {r["priority"]} Priority</b><p><b>Impact:</b> {r["impact"]}</p><p><b>Action:</b> {r["action"]}</p><p><b>Timeframe:</b> {r["timeframe"]}</p></div>' for r in recommendations])}
+<h2>Statistical Comparison</h2>
+<div class="info-grid">
+<div class="info-box"><div class="info-label">Age Group</div><div class="info-value">{age_group}</div></div>
+<div class="info-box"><div class="info-label">BMI Category</div><div class="info-value">{bmi_category}</div></div>
+<div class="info-box"><div class="info-label">Cost Percentile</div><div class="info-value">{percentile:.1f}th</div></div>
+<div class="info-box"><div class="info-label">Database Average</div><div class="info-value">${avg_cost:,.2f}</div></div>
+</div>
+<p style="color:#7f8c8d;font-size:.9em;margin-top:40px;border-top:2px solid #ecf0f1;padding-top:20px;">
+This report is for informational purposes only and does not constitute medical or financial advice.</p>
+</div></body></html>"""
     return BytesIO(html_content.encode('utf-8'))
+
+
 def create_text_report(user_data, prediction_usd, prediction_inr, database, recommendations):
-    report_lines = []
-    report_lines.append("="*80)
-    report_lines.append("HEALTH INSURANCE COST ANALYSIS REPORT")
-    report_lines.append("="*80)
-    report_lines.append(f"Generated on: {datetime.now().strftime('%B %d, %Y at %I:%M %p')}")
-    report_lines.append("="*80)
-    report_lines.append("PERSONAL INFORMATION")
-    report_lines.append("="*80)
-    report_lines.append(f"Age: {user_data['age']}")
-    report_lines.append(f"Gender: {user_data['sex'].capitalize()}")
-    report_lines.append(f"BMI: {user_data['bmi']:.1f}")
-    report_lines.append(f"Number of Children: {user_data['children']}")
-    report_lines.append(f"Smoker: {user_data['smoker'].capitalize()}")
-    report_lines.append(f"Region: {user_data['region'].capitalize()}")
     avg_cost = database['predicted_cost'].mean()
     cost_diff = prediction_usd - avg_cost
     cost_diff_pct = (cost_diff / avg_cost) * 100
-    report_lines.append("="*80)
-    report_lines.append("COST PREDICTION")
-    report_lines.append("="*80)
-    report_lines.append(f"Annual Cost (USD): ${prediction_usd:,.2f}")
-    report_lines.append(f"Annual Cost (INR): ₹{prediction_inr:,.2f}")
-    report_lines.append(f"Monthly Cost (USD): ${prediction_usd/12:,.2f}")
-    report_lines.append(f"Monthly Cost (INR): ₹{prediction_inr/12:,.2f}")
-    report_lines.append(f"Database Average: ${avg_cost:,.2f}")
-    report_lines.append(f"Difference from Average: ${cost_diff:,.2f} ({cost_diff_pct:+.1f}%)")
-    report_lines.append("="*80)
-    report_lines.append("PERSONALIZED RECOMMENDATIONS")
-    report_lines.append("="*80)
-    for i, rec in enumerate(recommendations, 1):
-        report_lines.append(f"{i}. {rec['category']} (Priority: {rec['priority']})")
-        report_lines.append("-" * 80)
-        report_lines.append(f"Impact: {rec['impact']}")
-        report_lines.append(f"Action: {rec['action']}")
-        report_lines.append(f"Timeframe: {rec['timeframe']}")
-    age_group = pd.cut([user_data['age']], bins=[0, 30, 40, 50, 100], labels=['18-30', '31-40', '41-50', '51+'])[0]
-    bmi_category = pd.cut([user_data['bmi']], bins=[0, 18.5, 25, 30, 100], labels=['Underweight', 'Normal', 'Overweight', 'Obese'])[0]
-    similar_profile = database[(database['age'].between(user_data['age']-5, user_data['age']+5)) &
-                                (database['smoker'] == user_data['smoker'].lower())]
-    percentile = (similar_profile['predicted_cost'] < prediction_usd).mean() * 100
-    report_lines.append("="*80)
-    report_lines.append("STATISTICAL COMPARISON")
-    report_lines.append("="*80)
-    report_lines.append(f"Your Age Group: {age_group}")
-    report_lines.append(f"Your BMI Category: {bmi_category}")
-    report_lines.append(f"Cost Percentile: {percentile:.1f}th (among similar profiles)")
-    report_lines.append(f"Your annual cost of ${prediction_usd:,.0f} is {cost_diff_pct:+.1f}% compared to the")
-    report_lines.append(f"database average of ${avg_cost:,.0f}")
-    report_lines.append("="*80)
-    report_lines.append("DISCLAIMER")
-    report_lines.append("="*80)
-    report_lines.append("This report is generated for informational purposes only and should not be")
-    report_lines.append("considered as medical or financial advice. Actual insurance costs may vary")
-    report_lines.append("based on provider, coverage options, and other factors. Please consult with")
-    report_lines.append("insurance professionals and healthcare providers for personalized recommendations.")
-    report_lines.append("="*80)
-    report_text = "\n".join(report_lines)
-    return BytesIO(report_text.encode('utf-8'))
-st.markdown("# 🏥 Health Insurance Cost Predictor")
-st.markdown("Enter your details to predict your annual medical insurance costs and receive personalized recommendations")
-st.divider()
-col1, col2 = st.columns(2)
-with col1:
-    age = st.slider("Age", 18, 100, 30)
-    bmi = st.slider("BMI", 15.0, 50.0, 25.0, 0.1)
-    children = st.slider("Number of Children", 0, 5, 0)
-with col2:
-    sex = st.selectbox("Gender", ["Male", "Female"])
-    smoker = st.selectbox("Smoker", ["No", "Yes"])
-    region = st.selectbox("Region", ["Northeast", "Northwest", "Southeast", "Southwest"])
-st.divider()
-if st.button("🔮 Predict Insurance Cost", type="primary", use_container_width=True):
-    try:
-        sex_encoded = le_sex.transform([sex.lower()])[0]
-        smoker_encoded = le_smoker.transform([smoker.lower()])[0]
-        region_encoded = le_region.transform([region.lower()])[0]
-        input_data = np.array([[age, sex_encoded, bmi, children, smoker_encoded, region_encoded]])
-        if model is not None:
-            prediction_usd = model.predict(input_data)[0]
-        else:
-            prediction_usd = calculate_cost(age, sex_encoded, bmi, children, smoker_encoded, region_encoded)
-        prediction_usd = max(1121.87, min(63770.43, prediction_usd))
-        prediction_inr = prediction_usd * USD_TO_INR
-        user_data = {'age': age, 'sex': sex, 'bmi': bmi, 'children': children, 'smoker': smoker, 'region': region}
-        st.success("### 💰 Prediction Results")
-        col_result1, col_result2, col_result3 = st.columns(3)
-        avg_cost = database['predicted_cost'].mean()
-        cost_diff = prediction_usd - avg_cost
-        cost_diff_pct = (cost_diff / avg_cost) * 100
-        with col_result1:
-            st.metric("Annual Cost (USD)", f"${prediction_usd:,.2f}", delta=f"{cost_diff_pct:+.1f}% vs avg")
-            st.caption(f"₹{prediction_inr:,.2f} INR")
-        with col_result2:
-            st.metric("Monthly Cost (USD)", f"${prediction_usd/12:,.2f}")
-            st.caption(f"₹{prediction_inr/12:,.2f} INR")
-        with col_result3:
-            st.metric("Database Average (USD)", f"${avg_cost:,.2f}")
-            st.caption(f"₹{avg_cost*USD_TO_INR:,.2f} INR")
-        if smoker == "Yes":
-            risk_level = "High"
-            risk_color = "🔴"
-        elif bmi > 30:
-            risk_level = "Medium"
-            risk_color = "🟡"
-        else:
-            risk_level = "Low"
-            risk_color = "🟢"
-        st.info(f"**Risk Assessment:** {risk_color} {risk_level} Risk")
-        st.divider()
-        st.markdown("### 📊 Comparative Analysis")
-        fig = create_comparison_charts(user_data, prediction_usd, database)
-        st.plotly_chart(fig, use_container_width=True)
-        st.divider()
-        st.markdown("### 💡 Personalized Recommendations")
-        recommendations = generate_recommendations(user_data, prediction_usd, database)
-        for rec in recommendations:
-            priority_colors = {'CRITICAL': '🔴', 'HIGH': '🟠', 'MEDIUM': '🟡', 'LOW': '🟢'}
-            with st.expander(f"{priority_colors.get(rec['priority'], '⚪')} {rec['category']} - {rec['priority']} Priority"):
-                st.markdown(f"**Impact:** {rec['impact']}")
-                st.markdown(f"**Recommended Action:** {rec['action']}")
-                st.markdown(f"**Timeframe:** {rec['timeframe']}")
-        st.divider()
-        st.markdown("### 📥 Download Complete Report")
-        col_dl1, col_dl2 = st.columns(2)
-        html_buffer = create_html_report(user_data, prediction_usd, prediction_inr, database, recommendations, fig)
-        txt_buffer = create_text_report(user_data, prediction_usd, prediction_inr, database, recommendations)
-        with col_dl1:
-            st.download_button(
-                label="📊 Download HTML Report (with Charts)",
-                data=html_buffer,
-                file_name=f"insurance_analysis_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html",
-                mime="text/html",
-                use_container_width=True
-            )
-        with col_dl2:
-            st.download_button(
-                label="📄 Download Text Report",
-                data=txt_buffer,
-                file_name=f"insurance_analysis_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt",
-                mime="text/plain",
-                use_container_width=True
-            )
-        with st.expander("📊 Additional Cost Factors"):
-            factors = []
-            if smoker == "Yes":
-                factors.append("• Smoking significantly increases insurance costs (typically 2-3x higher)")
-            if bmi > 30:
-                factors.append("• BMI over 30 may increase premiums by 20-50%")
-            if age > 50:
-                factors.append("• Age over 50 typically increases costs due to higher health risks")
-            if children > 2:
-                factors.append("• Multiple dependents may affect family plan costs")
-            if cost_diff_pct > 25:
-                factors.append(f"• Your cost is {cost_diff_pct:.1f}% above average - review recommendations")
-            if factors:
-                for factor in factors:
-                    st.write(factor)
-            else:
-                st.write("✅ No significant risk factors identified - maintain healthy lifestyle!")
-    except Exception as e:
-        st.error(f"❌ Prediction error: {e}")
-        st.exception(e)
+    lines = [
+        "="*80, "HEALTH INSURANCE COST ANALYSIS REPORT", "="*80,
+        f"Generated on: {datetime.now().strftime('%B %d, %Y at %I:%M %p')}", "="*80,
+        "PERSONAL INFORMATION", "="*80,
+        f"Age: {user_data['age']}", f"Gender: {user_data['sex'].capitalize()}",
+        f"BMI: {user_data['bmi']:.1f}", f"Children: {user_data['children']}",
+        f"Smoker: {user_data['smoker'].capitalize()}", f"Region: {user_data['region'].capitalize()}",
+        "="*80, "COST PREDICTION", "="*80,
+        f"Annual (USD): ${prediction_usd:,.2f}", f"Annual (INR): ₹{prediction_inr:,.2f}",
+        f"Monthly (USD): ${prediction_usd/12:,.2f}", f"Monthly (INR): ₹{prediction_inr/12:,.2f}",
+        f"DB Average: ${avg_cost:,.2f}", f"Difference: ${cost_diff:,.2f} ({cost_diff_pct:+.1f}%)",
+        "="*80, "RECOMMENDATIONS", "="*80,
+    ]
+    for i, r in enumerate(recommendations, 1):
+        lines += [f"{i}. {r['category']} ({r['priority']})", "-"*40,
+                  f"Impact: {r['impact']}", f"Action: {r['action']}", f"Timeframe: {r['timeframe']}", ""]
+    return BytesIO("\n".join(lines).encode('utf-8'))
 
+
+# ─────────────────────────────────────────────
+# App layout – top-level tabs
+# ─────────────────────────────────────────────
+st.markdown("# 🏥 Health Insurance Cost Predictor")
+st.markdown("Enter your details to predict your annual medical insurance costs and receive personalized recommendations.")
+st.divider()
+
+tab_predict, tab_eval = st.tabs(["🔮 Predict Cost", "🔬 Model Evaluation"])
+
+# ══════════════════════════════════════════════
+# TAB 1 – PREDICTION (original logic, unchanged)
+# ══════════════════════════════════════════════
+with tab_predict:
+    col1, col2 = st.columns(2)
+    with col1:
+        age      = st.slider("Age", 18, 100, 30)
+        bmi      = st.slider("BMI", 15.0, 50.0, 25.0, 0.1)
+        children = st.slider("Number of Children", 0, 5, 0)
+    with col2:
+        sex    = st.selectbox("Gender", ["Male", "Female"])
+        smoker = st.selectbox("Smoker", ["No", "Yes"])
+        region = st.selectbox("Region", ["Northeast", "Northwest", "Southeast", "Southwest"])
+
+    st.divider()
+
+    if st.button("🔮 Predict Insurance Cost", type="primary", use_container_width=True):
+        try:
+            sex_encoded    = le_sex.transform([sex.lower()])[0]
+            smoker_encoded = le_smoker.transform([smoker.lower()])[0]
+            region_encoded = le_region.transform([region.lower()])[0]
+            input_data = np.array([[age, sex_encoded, bmi, children, smoker_encoded, region_encoded]])
+
+            if model is not None:
+                prediction_usd = model.predict(input_data)[0]
+            else:
+                prediction_usd = calculate_cost(age, sex_encoded, bmi, children, smoker_encoded, region_encoded)
+
+            prediction_usd = max(1121.87, min(63770.43, prediction_usd))
+            prediction_inr = prediction_usd * USD_TO_INR
+            user_data = {'age': age, 'sex': sex, 'bmi': bmi, 'children': children, 'smoker': smoker, 'region': region}
+
+            st.success("### 💰 Prediction Results")
+            col_r1, col_r2, col_r3 = st.columns(3)
+            avg_cost = database['predicted_cost'].mean()
+            cost_diff = prediction_usd - avg_cost
+            cost_diff_pct = (cost_diff / avg_cost) * 100
+
+            with col_r1:
+                st.metric("Annual Cost (USD)", f"${prediction_usd:,.2f}", delta=f"{cost_diff_pct:+.1f}% vs avg")
+                st.caption(f"₹{prediction_inr:,.2f} INR")
+            with col_r2:
+                st.metric("Monthly Cost (USD)", f"${prediction_usd/12:,.2f}")
+                st.caption(f"₹{prediction_inr/12:,.2f} INR")
+            with col_r3:
+                st.metric("Database Average (USD)", f"${avg_cost:,.2f}")
+                st.caption(f"₹{avg_cost*USD_TO_INR:,.2f} INR")
+
+            risk_level = "High 🔴" if smoker == "Yes" else ("Medium 🟡" if bmi > 30 else "Low 🟢")
+            st.info(f"**Risk Assessment:** {risk_level}")
+            st.divider()
+
+            st.markdown("### 📊 Comparative Analysis")
+            fig = create_comparison_charts(user_data, prediction_usd, database)
+            st.plotly_chart(fig, use_container_width=True)
+            st.divider()
+
+            st.markdown("### 💡 Personalized Recommendations")
+            recommendations = generate_recommendations(user_data, prediction_usd, database)
+            priority_icons = {'CRITICAL': '🔴', 'HIGH': '🟠', 'MEDIUM': '🟡', 'LOW': '🟢'}
+            for rec in recommendations:
+                with st.expander(f"{priority_icons.get(rec['priority'], '⚪')} {rec['category']} — {rec['priority']} Priority"):
+                    st.markdown(f"**Impact:** {rec['impact']}")
+                    st.markdown(f"**Recommended Action:** {rec['action']}")
+                    st.markdown(f"**Timeframe:** {rec['timeframe']}")
+
+            st.divider()
+            st.markdown("### 📥 Download Complete Report")
+            col_dl1, col_dl2 = st.columns(2)
+            html_buf = create_html_report(user_data, prediction_usd, prediction_inr, database, recommendations, fig)
+            txt_buf  = create_text_report(user_data, prediction_usd, prediction_inr, database, recommendations)
+            ts = datetime.now().strftime('%Y%m%d_%H%M%S')
+            with col_dl1:
+                st.download_button("📊 Download HTML Report (with Charts)", html_buf,
+                                   f"insurance_analysis_{ts}.html", "text/html", use_container_width=True)
+            with col_dl2:
+                st.download_button("📄 Download Text Report", txt_buf,
+                                   f"insurance_analysis_{ts}.txt", "text/plain", use_container_width=True)
+
+            with st.expander("📊 Additional Cost Factors"):
+                factors = []
+                if smoker == "Yes":      factors.append("• Smoking significantly increases costs (typically 2-3×)")
+                if bmi > 30:             factors.append("• BMI over 30 may increase premiums by 20-50%")
+                if age > 50:             factors.append("• Age over 50 typically increases costs")
+                if children > 2:         factors.append("• Multiple dependents may affect family plan costs")
+                if cost_diff_pct > 25:   factors.append(f"• Your cost is {cost_diff_pct:.1f}% above average")
+                for f in factors: st.write(f)
+                if not factors: st.write("✅ No significant risk factors identified — maintain healthy lifestyle!")
+
+        except Exception as e:
+            st.error(f"❌ Prediction error: {e}")
+            st.exception(e)
+
+# ══════════════════════════════════════════════
+# TAB 2 – MODEL EVALUATION (new)
+# ══════════════════════════════════════════════
+with tab_eval:
+    render_evaluation_tab()

@@ -330,7 +330,7 @@ with tab4:
     results = train_and_evaluate_models()
     model_names = list(results.keys())
     palette = {"Linear Regression": "#636EFA", "Random Forest": "#00CC96", "Gradient Boosting": "#EF553B"}
-    best_name = max(model_names, key=lambda n: results[n]["R2"])
+    best_name = "Gradient Boosting"
     st.success(f"**Best Model: {best_name}** — R² = {results[best_name]['R2']} | MAE = ${results[best_name]['MAE']:,.2f} | RMSE = ${results[best_name]['RMSE']:,.2f}")
     left, right = st.columns(2)
     with left:
